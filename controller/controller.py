@@ -19,6 +19,7 @@ Copyright (c) 2025 Shane William Scott
 import collections
 import signal  # for file operations, to kill processes, for regex, for subprocesses
 import subprocess
+import shlex
 import os
 import socket
 import re
@@ -41,6 +42,7 @@ from app.auxiliary import (
     unixPath2Win, winPath2Unix, getPid, formatCommandQProcess, isWsl, BrowserOpener, MyQProcess,
 )
 from app.timing import getTimestamp, timing
+from app.nmap_command import NmapCommandError, build_nmap_command, has_output_option
 from app.scheduler.approvals import ensure_scheduler_approval_table, queue_pending_approval, update_pending_approval
 from app.scheduler.audit import log_scheduler_decision
 from app.scheduler.config import SchedulerConfigManager
@@ -1405,6 +1407,47 @@ class Controller:
                 self.runCommand(name, tabTitle, ip, '', '', command, getTimestamp(True), outputfile,
                                 self.view.createNewTabForHost(ip, tabTitle, invisibleTab))
                 break
+
+    NMAP_COMMAND_TAB_TITLE = 'custom scan'
+
+    def runNmapCommand(self, ip, optionsText):
+        """Run nmap with the operator's own options against one host (the nmap command bar of the desktop UI).
+
+        Returns (started, message); the message is the command that was queued, or why nothing was started.
+        The output is shown live in a 'custom scan' tab of that host and, when nmap finishes, its results are
+        imported into the project like those of any other nmap run.
+        """
+        ip = str(ip or '').strip()
+        try:
+            command = build_nmap_command(optionsText, ip)
+        except NmapCommandError as exc:
+            return False, str(exc)
+
+        activeProject = getattr(self.logic, 'activeProject', None)
+        if activeProject is None:
+            return False, 'There is no open project.'
+
+        shown = command
+        outputfile = ''
+        if not has_output_option(command):
+            # Same location handleHostAction uses for host tools; -oA gives the importer its XML.
+            session_path = getattr(activeProject, 'sessionFile', None)
+            tool_output_dir = os.path.dirname(session_path) if session_path else activeProject.properties.runningFolder
+            outputfile = normalize_path(os.path.join(
+                tool_output_dir,
+                f"{getTimestamp()}-nmapcustom-{re.sub('[^0-9a-zA-Z.:]', '', ip)}"
+            ))
+            command = f"{command} -oA {shlex.quote(outputfile)}"
+
+        log.info(f'Running custom nmap command for {ip}: {command}')
+        textbox = self.view.createNewTabForHost(ip, self.NMAP_COMMAND_TAB_TITLE, False)
+        try:
+            self.view.ui.ServicesTabWidget.setCurrentWidget(textbox.parentWidget())
+        except Exception:
+            log.exception('Could not bring the custom scan tab to the front')
+        self.runCommand('nmap', self.NMAP_COMMAND_TAB_TITLE, ip, '', '', command, getTimestamp(True), outputfile,
+                        textbox)
+        return True, f'Queued: {shown}'
 
     @timing
     def getContextMenuForServiceName(self, serviceName='*', menu=None):

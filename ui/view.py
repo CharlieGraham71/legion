@@ -28,6 +28,7 @@ from collections.abc import Mapping
 
 from app.ApplicationInfo import applicationInfo, getVersion
 from app.timing import getTimestamp
+from app.nmap_command import PRESETS as NMAP_COMMAND_PRESETS
 from ui.ViewState import ViewState
 from ui.dialogs import *
 from ui.settingsDialog import *
@@ -141,6 +142,8 @@ class View(QtCore.QObject):
     # initialisations (globals, etc)
     def start(self, title='*untitled'):
         self.viewState = ViewState()
+        self._showNmapCommandBarStatus('')
+        self.refreshNmapCommandBarTarget()
         self.ui.keywordTextInput.setText('')                            # clear keyword filter
 
         self.ProcessesTableModel = None  # fixes bug when sorting processes for the first time
@@ -254,6 +257,7 @@ class View(QtCore.QObject):
         # Connect the clicked signal of the HostsTableView to the hostTableClick() method
         self.ui.HostsTableView.clicked.connect(self.hostTableClick)
         self.ui.HostsTableView.doubleClicked.connect(self.hostTableDoubleClick)
+        self.setupNmapCommandBar()
 
         ##
 
@@ -952,6 +956,84 @@ class View(QtCore.QObject):
     def connectAddHostsOverlayClick(self):
         self.ui.addHostsOverlay.selectionChanged.connect(self.connectAddHostsDialog)
 
+    #################### NMAP COMMAND BAR ####################
+
+    NMAP_COMMAND_HISTORY_LIMIT = 20
+
+    def setupNmapCommandBar(self):
+        box = self.ui.NmapCommandInput
+        for label, options in NMAP_COMMAND_PRESETS:
+            box.addItem(f"{options}    ({label})", options)
+        box.setCurrentIndex(-1)
+        box.setEditText('')
+        # Picking an entry puts only its options in the box; the description stays in the list.
+        box.activated.connect(self._nmapCommandBarEntryPicked)
+        box.lineEdit().returnPressed.connect(self.runNmapCommandBar)
+        self.ui.NmapCommandRunButton.clicked.connect(self.runNmapCommandBar)
+        self._nmapCommandHistoryCount = 0
+        self.refreshNmapCommandBarTarget()
+
+    def _nmapCommandBarEntryPicked(self, index):
+        options = self.ui.NmapCommandInput.itemData(index)
+        if options is not None:
+            self.ui.NmapCommandInput.setEditText(str(options))
+
+    # the IP the command bar runs against: the host shown in the right panel, i.e. the one selected in the hosts table
+    def nmapCommandBarTarget(self):
+        viewState = getattr(self, 'viewState', None)
+        clicked = str(getattr(viewState, 'ip_clicked', '') or '').strip()
+        if not clicked:
+            return ''
+        target = clicked.split()[0]                                     # the OS tab stores "ip (hostname)"
+        try:
+            selection = self.ui.HostsTableView.selectionModel()
+            if selection is None or not selection.selectedRows():
+                return ''
+            if self.HostsTableModel.getRowForIp(target) is None:
+                return ''
+        except Exception:
+            return ''
+        return target
+
+    def refreshNmapCommandBarTarget(self):
+        target = self.nmapCommandBarTarget()
+        self.ui.NmapCommandTargetLabel.setText(f'→ {target}' if target else 'no host selected')
+        self.ui.NmapCommandRunButton.setEnabled(bool(target))
+
+    def _showNmapCommandBarStatus(self, message, error=False):
+        label = self.ui.NmapCommandStatusLabel
+        label.setStyleSheet('color: #c0392b;' if error else '')
+        label.setText(str(message))
+        label.setVisible(bool(message))
+
+    def _rememberNmapCommand(self, options):
+        box = self.ui.NmapCommandInput
+        options = str(options).strip()
+        if not options:
+            return
+        for i in range(box.count()):
+            if str(box.itemData(i)) == options:
+                if i >= self._nmapCommandHistoryCount:
+                    return                                              # a preset: leave the list as it is
+                box.removeItem(i)                                       # typed before: move it to the top
+                self._nmapCommandHistoryCount -= 1
+                break
+        box.insertItem(0, options, options)
+        self._nmapCommandHistoryCount += 1
+        while self._nmapCommandHistoryCount > self.NMAP_COMMAND_HISTORY_LIMIT:
+            box.removeItem(self._nmapCommandHistoryCount - 1)
+            self._nmapCommandHistoryCount -= 1
+        box.setCurrentIndex(-1)
+        box.setEditText(options)
+
+    def runNmapCommandBar(self):
+        self.refreshNmapCommandBarTarget()
+        options = self.ui.NmapCommandInput.currentText()
+        started, message = self.controller.runNmapCommand(self.nmapCommandBarTarget(), options)
+        self._showNmapCommandBarStatus(message, error=not started)
+        if started:
+            self._rememberNmapCommand(options)
+
     def connectHostTableClick(self):
         self.ui.HostsTableView.clicked.connect(self.hostTableClick)
 
@@ -979,6 +1061,7 @@ class View(QtCore.QObject):
                     return
 
             self.viewState.ip_clicked = ip
+            self.refreshNmapCommandBarTarget()
             save = self.ui.ServicesTabWidget.currentIndex()
             self.removeToolTabs()
             self.restoreToolTabsForHost(self.viewState.ip_clicked)
@@ -997,6 +1080,7 @@ class View(QtCore.QObject):
                 return
             self.removeToolTabs()
             self.updateRightPanel('')
+            self.refreshNmapCommandBarTarget()
 
     ###
     
@@ -1801,6 +1885,7 @@ class View(QtCore.QObject):
         if hostname:
             identifier = f"{ip} ({hostname})"
         self.viewState.ip_clicked = identifier
+        self.refreshNmapCommandBarTarget()
         host_row = self.HostsTableModel.getRowForIp(ip)
         if host_row is not None:
             self.ui.HostsTableView.selectRow(host_row)

@@ -293,11 +293,49 @@ class Ui_MainWindow(object):
         self.horizontalLayout_4.addWidget(self.NotesTextEdit)
         self.ServicesTabWidget.addTab(self.NotesTab, _fromUtf8(""))
 
+    def setupNmapCommandBar(self):
+        # One line above the hosts and results panels: nmap options typed here run against the selected host.
+        self.NmapCommandBar = QtWidgets.QWidget(self.ScanTab)
+        self.NmapCommandBar.setObjectName(_fromUtf8("NmapCommandBar"))
+        self.NmapCommandLayout = QtWidgets.QHBoxLayout(self.NmapCommandBar)
+        self.NmapCommandLayout.setObjectName(_fromUtf8("NmapCommandLayout"))
+        self.NmapCommandLayout.setContentsMargins(0, 0, 0, 0)
+
+        self.NmapCommandLabel = QtWidgets.QLabel(self.NmapCommandBar)
+        self.NmapCommandLabel.setObjectName(_fromUtf8("NmapCommandLabel"))
+        self.NmapCommandLayout.addWidget(self.NmapCommandLabel)
+
+        self.NmapCommandInput = QtWidgets.QComboBox(self.NmapCommandBar)
+        self.NmapCommandInput.setObjectName(_fromUtf8("NmapCommandInput"))
+        self.NmapCommandInput.setEditable(True)
+        self.NmapCommandInput.setInsertPolicy(QtWidgets.QComboBox.InsertPolicy.NoInsert)
+        self.NmapCommandInput.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
+        )
+        self.NmapCommandLayout.addWidget(self.NmapCommandInput, 1)
+
+        self.NmapCommandTargetLabel = QtWidgets.QLabel(self.NmapCommandBar)
+        self.NmapCommandTargetLabel.setObjectName(_fromUtf8("NmapCommandTargetLabel"))
+        self.NmapCommandLayout.addWidget(self.NmapCommandTargetLabel)
+
+        self.NmapCommandRunButton = QtWidgets.QPushButton(self.NmapCommandBar)
+        self.NmapCommandRunButton.setObjectName(_fromUtf8("NmapCommandRunButton"))
+        self.NmapCommandLayout.addWidget(self.NmapCommandRunButton)
+
+        self.NmapCommandStatusLabel = QtWidgets.QLabel(self.ScanTab)
+        self.NmapCommandStatusLabel.setObjectName(_fromUtf8("NmapCommandStatusLabel"))
+        self.NmapCommandStatusLabel.setWordWrap(True)
+        self.NmapCommandStatusLabel.hide()
+
     def setupMainTabs(self):
-        self.gridLayout_2.addWidget(self.splitter, 0, 0, 1, 1)
+        self.setupNmapCommandBar()
+        self.gridLayout_2.addWidget(self.NmapCommandBar, 0, 0, 1, 1)
+        self.gridLayout_2.addWidget(self.NmapCommandStatusLabel, 1, 0, 1, 1)
+        self.gridLayout_2.addWidget(self.splitter, 2, 0, 1, 1)
+        self.gridLayout_2.setRowStretch(2, 1)
         self.gridLayout_3 = QtWidgets.QGridLayout()
         self.gridLayout_3.setObjectName(_fromUtf8("gridLayout_3"))
-        self.gridLayout_2.addLayout(self.gridLayout_3, 0, 0, 1, 1)
+        self.gridLayout_2.addLayout(self.gridLayout_3, 2, 0, 1, 1)
         self.MainTabWidget.addTab(self.ScanTab, _fromUtf8(""))
         
         self.BruteTab = QtWidgets.QWidget()
@@ -445,6 +483,17 @@ class Ui_MainWindow(object):
 
     def retranslateUi(self, MainWindow):
         MainWindow.setWindowTitle(QtWidgets.QApplication.translate("MainWindow", "LEGION", None))
+        self.NmapCommandLabel.setText(QtWidgets.QApplication.translate("MainWindow", "nmap", None))
+        self.NmapCommandInput.setToolTip(QtWidgets.QApplication.translate(
+            "MainWindow",
+            "Type nmap options and press Enter. They run against the selected host; "
+            "the output opens in a 'custom scan' tab and the results are added to the host.",
+            None))
+        self.NmapCommandInput.lineEdit().setPlaceholderText(QtWidgets.QApplication.translate(
+            "MainWindow", "nmap options for the selected host, e.g. -sV -p 1-1000", None))
+        self.NmapCommandRunButton.setText(QtWidgets.QApplication.translate("MainWindow", "Run", None))
+        self.NmapCommandRunButton.setToolTip(QtWidgets.QApplication.translate(
+            "MainWindow", "Run nmap with these options against the selected host", None))
         self.HostsTabWidget.setTabText(self.HostsTabWidget.indexOf(self.HostsTab),
                                        QtWidgets.QApplication.translate("MainWindow", "Hosts", None))
         self.HostsTabWidget.setTabText(self.HostsTabWidget.indexOf(self.ServicesLeftTab),
