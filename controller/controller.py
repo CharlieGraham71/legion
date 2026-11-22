@@ -42,7 +42,7 @@ from app.auxiliary import (
     unixPath2Win, winPath2Unix, getPid, formatCommandQProcess, isWsl, BrowserOpener, MyQProcess,
 )
 from app.timing import getTimestamp, timing
-from app.nmap_command import NmapCommandError, build_nmap_command, has_output_option
+from app.nmap_command import NmapCommandError, build_nmap_command, command_target, has_output_option
 from app.scheduler.approvals import ensure_scheduler_approval_table, queue_pending_approval, update_pending_approval
 from app.scheduler.audit import log_scheduler_decision
 from app.scheduler.config import SchedulerConfigManager
@@ -512,15 +512,16 @@ class Controller:
 
     NMAP_IMPORT_RETRY_MS = 50
 
-    def queueNmapImport(self, filename, output='', interactive=True):
+    def queueNmapImport(self, filename, output='', interactive=True, schedule=True):
         """Import an nmap XML file; queued (FIFO) if another import is still running on the importer thread.
 
         interactive imports (chosen by the user) show the progress bar and can be cancelled; background ones
         (automatic imports after each staged-nmap stage) run without that UI and are not dropped by Cancel.
+        schedule=False only records the results: the scheduler (automated follow-up tools) is not started.
         """
         if not hasattr(self, "_pendingNmapImports"):
             self._pendingNmapImports = collections.deque()
-        self._pendingNmapImports.append((str(filename), str(output or ''), bool(interactive)))
+        self._pendingNmapImports.append((str(filename), str(output or ''), bool(interactive), bool(schedule)))
         self._startNextNmapImport()
 
     def _startNextNmapImport(self, from_finished=False):
@@ -535,9 +536,10 @@ class Controller:
         pending = getattr(self, "_pendingNmapImports", None)
         if not pending:
             return
-        filename, output, interactive = pending.popleft()
+        filename, output, interactive, schedule = pending.popleft()
         importer.setFilename(filename)
         importer.setOutput(output)  # '' for file imports, so a previous scan's terminal output is not reused
+        importer.setScheduleAfterImport(schedule)
         importer.resetCancel()      # a Cancel for an earlier import must not abort this one
         if interactive:
             try:
@@ -1408,24 +1410,31 @@ class Controller:
                                 self.view.createNewTabForHost(ip, tabTitle, invisibleTab))
                 break
 
-    NMAP_COMMAND_TAB_TITLE = 'custom scan'
+    # 'nmap' in the title keeps the output widget out of the per-host tool tabs (see View.restoreToolTabsForHost);
+    # it is shown in the Nmap tab of the bottom panel instead.
+    NMAP_COMMAND_TAB_TITLE = 'nmap (command bar)'
 
-    def runNmapCommand(self, ip, optionsText):
-        """Run nmap with the operator's own options against one host (the nmap command bar of the desktop UI).
+    def runNmapCommand(self, selectedHost, commandText):
+        """Run what the operator typed in the nmap command bar of the desktop UI, and nothing else.
 
-        Returns (started, message); the message is the command that was queued, or why nothing was started.
-        The output is shown live in a 'custom scan' tab of that host and, when nmap finishes, its results are
-        imported into the project like those of any other nmap run.
+        The text is run by nmap as typed. If it names no target, the selected host is used. Returns
+        (started, message); the message is the command that was queued, or why nothing was started.
+        The output is shown live in the Nmap tab of the bottom panel. When nmap finishes, the hosts and ports it
+        found are recorded in the project, but the scheduler is not started: no other tool runs because of this scan.
         """
-        ip = str(ip or '').strip()
+        selectedHost = str(selectedHost or '').strip()
         try:
-            command = build_nmap_command(optionsText, ip)
+            command = build_nmap_command(commandText, selectedHost)
         except NmapCommandError as exc:
             return False, str(exc)
 
         activeProject = getattr(self.logic, 'activeProject', None)
         if activeProject is None:
             return False, 'There is no open project.'
+
+        # The host the run is filed under (process table, Tools tab): the single target, else what was typed.
+        _own, targets = command_target(commandText, selectedHost)
+        host = targets[0] if len(targets) == 1 else (', '.join(targets) if targets else 'targets from file')
 
         shown = command
         outputfile = ''
@@ -1435,18 +1444,18 @@ class Controller:
             tool_output_dir = os.path.dirname(session_path) if session_path else activeProject.properties.runningFolder
             outputfile = normalize_path(os.path.join(
                 tool_output_dir,
-                f"{getTimestamp()}-nmapcustom-{re.sub('[^0-9a-zA-Z.:]', '', ip)}"
+                f"{getTimestamp()}-nmapcommandbar-{re.sub('[^0-9a-zA-Z.]', '', host)[:40]}"
             ))
             command = f"{command} -oA {shlex.quote(outputfile)}"
 
-        log.info(f'Running custom nmap command for {ip}: {command}')
-        textbox = self.view.createNewTabForHost(ip, self.NMAP_COMMAND_TAB_TITLE, False)
+        log.info(f'Running nmap command bar command: {command}')
+        textbox = self.view.createNewTabForHost(host, self.NMAP_COMMAND_TAB_TITLE, True)
         try:
-            self.view.ui.ServicesTabWidget.setCurrentWidget(textbox.parentWidget())
+            self.view.showNmapCommandOutput(textbox, shown)
         except Exception:
-            log.exception('Could not bring the custom scan tab to the front')
-        self.runCommand('nmap', self.NMAP_COMMAND_TAB_TITLE, ip, '', '', command, getTimestamp(True), outputfile,
-                        textbox)
+            log.exception('Could not show the nmap command output')
+        self.runCommand('nmap', self.NMAP_COMMAND_TAB_TITLE, host, '', '', command, getTimestamp(True), outputfile,
+                        textbox, run_scheduler=False)
         return True, f'Queued: {shown}'
 
     @timing
@@ -2185,6 +2194,7 @@ class Controller:
         staged_include_udp=True,
         staged_version_light=False,
         completion_handler=None,
+        run_scheduler=True,
     ):
         def handleProcStop(*vargs):
             self._stopProcessTimer(qProcess.id)
@@ -2243,6 +2253,8 @@ class Controller:
 
         self.logic.createFolderForTool(name)
         qProcess = MyQProcess(name, tabTitle, hostIp, port, protocol, command, startTime, outputfile, textbox)
+        # False for the nmap command bar: its results are imported, but no follow-up tools are started for them.
+        qProcess.runSchedulerAfterImport = bool(run_scheduler)
         qProcess.started.connect(timer.start)
         qProcess.finished.connect(handleProcStop)
         updateElapsed.timeout.connect(handleProcUpdate)
@@ -2687,7 +2699,8 @@ class Controller:
                             xml_path = self._locateToolOutputXml(outputfile, outputFolder)
                             try:
                                 self.queueNmapImport(
-                                    str(xml_path), str(qProcess.display.toPlainText()), interactive=False)
+                                    str(xml_path), str(qProcess.display.toPlainText()), interactive=False,
+                                    schedule=getattr(qProcess, 'runSchedulerAfterImport', True) is not False)
                             except Exception:
                                 log.exception(f"Error starting nmapImporter for {xml_path}")
                     elif 'PythonScript' in qProcess.command:

@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from app.nmap_command import NmapCommandError, PRESETS, build_nmap_command, has_output_option
+from app.nmap_command import NmapCommandError, PRESETS, build_nmap_command, command_target, has_output_option
 
 
 class BuildNmapCommandTest(unittest.TestCase):
@@ -26,13 +26,45 @@ class BuildNmapCommandTest(unittest.TestCase):
     def test_placeholder_says_where_the_target_goes(self):
         self.assertEqual("nmap 10.0.0.5 -p 80", build_nmap_command("[IP] -p 80", "10.0.0.5"))
 
-    def test_a_host_must_be_selected(self):
-        with self.assertRaises(NmapCommandError):
-            build_nmap_command("-sV", "")
-        with self.assertRaises(NmapCommandError):
-            build_nmap_command("-sV", None)
+    def test_a_typed_target_is_run_as_typed_and_the_selected_host_is_not_added(self):
+        self.assertEqual("nmap -sV 192.168.1.10", build_nmap_command("-sV 192.168.1.10", "10.0.0.5"))
+        self.assertEqual("nmap -sn 192.168.1.0/24", build_nmap_command("nmap -sn 192.168.1.0/24", "10.0.0.5"))
+        self.assertEqual("nmap scanme.nmap.org -F", build_nmap_command("scanme.nmap.org -F", "10.0.0.5"))
+        self.assertEqual("nmap -6 fe80::1", build_nmap_command("-6 fe80::1", "10.0.0.5"))
+        self.assertEqual("nmap -iL hosts.txt -F", build_nmap_command("-iL hosts.txt -F", "10.0.0.5"))
 
-    def test_target_cannot_be_an_option_or_contain_spaces(self):
+    def test_a_typed_target_needs_no_selected_host(self):
+        self.assertEqual("nmap -sV -p 3000 192.168.1.10", build_nmap_command("-sV -p 3000 192.168.1.10", ""))
+        self.assertEqual("nmap -F 192.168.1.1-50", build_nmap_command("sudo nmap -F 192.168.1.1-50", None))
+
+    def test_option_values_are_not_mistaken_for_targets(self):
+        cases = (
+            "-p 80,443", "-p http", "-T 4", "-e wlan0", "-S 10.0.0.1 -e wlan0 -Pn", "--script http-title.nse",
+            "--script-args http.useragent=x", "-oN out.txt", "--top-ports 100", "-D 10.0.0.2,10.0.0.3",
+            "--dns-servers 1.1.1.1", "--exclude 10.0.0.7", "-p1-1000 -T4 -sV",
+        )
+        for typed in cases:
+            self.assertEqual(f"nmap {typed} 10.0.0.5", build_nmap_command(typed, "10.0.0.5"), typed)
+            self.assertEqual((False, ["10.0.0.5"]), command_target(typed, "10.0.0.5"), typed)
+
+    def test_with_no_target_at_all_nothing_is_built(self):
+        for target in ("", None):
+            with self.assertRaises(NmapCommandError) as raised:
+                build_nmap_command("-sV", target)
+            self.assertIn("Type a target", str(raised.exception))
+        with self.assertRaises(NmapCommandError):
+            build_nmap_command("[IP] -p 80", "")
+
+    def test_command_target_says_what_would_be_scanned(self):
+        self.assertEqual((False, ["10.0.0.5"]), command_target("-sV", "10.0.0.5"))
+        self.assertEqual((False, []), command_target("-sV", ""))
+        self.assertEqual((True, ["192.168.1.10"]), command_target("-sV 192.168.1.10", "10.0.0.5"))
+        self.assertEqual((True, ["10.0.0.1", "10.0.0.2"]), command_target("10.0.0.1 10.0.0.2 -F", ""))
+        self.assertEqual((True, []), command_target("-iL hosts.txt", "10.0.0.5"))
+        self.assertEqual((False, ["10.0.0.5"]), command_target("[IP] -p 80", "10.0.0.5"))
+        self.assertEqual((False, []), command_target('--script "http', ""))
+
+    def test_selected_host_cannot_be_an_option_or_contain_spaces(self):
         for target in ("-iL", "10.0.0.5 10.0.0.6"):
             with self.assertRaises(NmapCommandError):
                 build_nmap_command("-sV", target)
@@ -61,10 +93,10 @@ class BuildNmapCommandTest(unittest.TestCase):
             f"`touch {marker}`", f"-p 80 > {marker}", f"-p 80 & touch {marker}",
         )
         for typed in typed_commands:
-            command = build_nmap_command(typed, "10.0.0.5")
+            command = build_nmap_command(f"{typed} 10.0.0.5", "")
             result = subprocess.run(["/bin/sh", "-c", command], env=env, capture_output=True, text=True, cwd=tmp)
             self.assertEqual(0, result.returncode, typed)
-            self.assertEqual(shlex.split(typed) + ["10.0.0.5"], result.stdout.splitlines(), typed)
+            self.assertEqual(shlex.split(f"{typed} 10.0.0.5"), result.stdout.splitlines(), typed)
             self.assertFalse(os.path.exists(marker), typed)
             self.assertEqual("nmap", shlex.split(command)[0], typed)
 

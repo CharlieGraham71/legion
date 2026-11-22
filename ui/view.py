@@ -28,7 +28,7 @@ from collections.abc import Mapping
 
 from app.ApplicationInfo import applicationInfo, getVersion
 from app.timing import getTimestamp
-from app.nmap_command import PRESETS as NMAP_COMMAND_PRESETS
+from app.nmap_command import PRESETS as NMAP_COMMAND_PRESETS, command_target as nmap_command_target
 from ui.ViewState import ViewState
 from ui.dialogs import *
 from ui.settingsDialog import *
@@ -143,6 +143,7 @@ class View(QtCore.QObject):
     def start(self, title='*untitled'):
         self.viewState = ViewState()
         self._showNmapCommandBarStatus('')
+        self.clearNmapCommandOutput()
         self.refreshNmapCommandBarTarget()
         self.ui.keywordTextInput.setText('')                            # clear keyword filter
 
@@ -959,6 +960,7 @@ class View(QtCore.QObject):
     #################### NMAP COMMAND BAR ####################
 
     NMAP_COMMAND_HISTORY_LIMIT = 20
+    NMAP_COMMAND_OUTPUT_LIMIT = 15
 
     def setupNmapCommandBar(self):
         box = self.ui.NmapCommandInput
@@ -969,6 +971,7 @@ class View(QtCore.QObject):
         # Picking an entry puts only its options in the box; the description stays in the list.
         box.activated.connect(self._nmapCommandBarEntryPicked)
         box.lineEdit().returnPressed.connect(self.runNmapCommandBar)
+        box.editTextChanged.connect(lambda _text: self.refreshNmapCommandBarTarget())
         self.ui.NmapCommandRunButton.clicked.connect(self.runNmapCommandBar)
         self._nmapCommandHistoryCount = 0
         self.refreshNmapCommandBarTarget()
@@ -978,7 +981,7 @@ class View(QtCore.QObject):
         if options is not None:
             self.ui.NmapCommandInput.setEditText(str(options))
 
-    # the IP the command bar runs against: the host shown in the right panel, i.e. the one selected in the hosts table
+    # the host used when the typed command names no target: the one shown in the right panel (selected in the table)
     def nmapCommandBarTarget(self):
         viewState = getattr(self, 'viewState', None)
         clicked = str(getattr(viewState, 'ip_clicked', '') or '').strip()
@@ -995,10 +998,17 @@ class View(QtCore.QObject):
             return ''
         return target
 
+    # says what Run would scan: the typed target(s), else the selected host
     def refreshNmapCommandBarTarget(self):
-        target = self.nmapCommandBarTarget()
-        self.ui.NmapCommandTargetLabel.setText(f'→ {target}' if target else 'no host selected')
-        self.ui.NmapCommandRunButton.setEnabled(bool(target))
+        own, targets = nmap_command_target(self.ui.NmapCommandInput.currentText(), self.nmapCommandBarTarget())
+        if own:
+            text = '\u2192 as typed'
+        elif targets:
+            text = f'\u2192 {targets[0]}'
+        else:
+            text = 'no target'
+        self.ui.NmapCommandTargetLabel.setText(text)
+        self.ui.NmapCommandRunButton.setEnabled(own or bool(targets))
 
     def _showNmapCommandBarStatus(self, message, error=False):
         label = self.ui.NmapCommandStatusLabel
@@ -1026,13 +1036,32 @@ class View(QtCore.QObject):
         box.setCurrentIndex(-1)
         box.setEditText(options)
 
+    # puts the output widget of a command bar run on top in the Nmap tab of the bottom panel and brings it forward
+    def showNmapCommandOutput(self, textbox, command):
+        stack = self.ui.NmapOutputStack
+        page = textbox.parentWidget() or textbox
+        stack.addWidget(page)
+        stack.setCurrentWidget(page)
+        self.ui.NmapOutputTitleLabel.setText(str(command))
+        # keep the placeholder (index 0) and the most recent outputs; older ones stay available in the Tools tab
+        while stack.count() > self.NMAP_COMMAND_OUTPUT_LIMIT + 1:
+            stack.removeWidget(stack.widget(1))
+        self.ui.BottomTabWidget.setCurrentWidget(self.ui.NmapOutputTab)
+
+    def clearNmapCommandOutput(self):
+        stack = self.ui.NmapOutputStack
+        while stack.count() > 1:
+            stack.removeWidget(stack.widget(1))
+        stack.setCurrentIndex(0)
+        self.ui.NmapOutputTitleLabel.setText('')
+
     def runNmapCommandBar(self):
         self.refreshNmapCommandBarTarget()
-        options = self.ui.NmapCommandInput.currentText()
-        started, message = self.controller.runNmapCommand(self.nmapCommandBarTarget(), options)
+        typed = self.ui.NmapCommandInput.currentText()
+        started, message = self.controller.runNmapCommand(self.nmapCommandBarTarget(), typed)
         self._showNmapCommandBarStatus(message, error=not started)
         if started:
-            self._rememberNmapCommand(options)
+            self._rememberNmapCommand(typed)
 
     def connectHostTableClick(self):
         self.ui.HostsTableView.clicked.connect(self.hostTableClick)

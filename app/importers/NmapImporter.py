@@ -109,6 +109,7 @@ class NmapImporter(QtCore.QThread):
     def __init__(self, updateProgressObservable: AbstractUpdateProgressObservable, hostRepository: HostRepository):
         QtCore.QThread.__init__(self, parent=None)
         self.output = ''
+        self.scheduleAfterImport = True
         self.updateProgressObservable = updateProgressObservable
         self.hostRepository = hostRepository
         self._cancel_requested = False  # Cancellation flag
@@ -298,6 +299,10 @@ class NmapImporter(QtCore.QThread):
 
     def setOutput(self, output):
         self.output = output
+
+    def setScheduleAfterImport(self, schedule):
+        # False: only record the results; do not start the automated follow-up tools for what was found.
+        self.scheduleAfterImport = bool(schedule)
 
     def run(self):
         """QThread entry point. Never lets an exception escape: under PyQt6 an exception leaving a QThread's
@@ -909,7 +914,8 @@ class NmapImporter(QtCore.QThread):
             # Removed periodic progress updates (QTimer) due to threading issues.
 
             # call the scheduler (if there is no terminal output it means we imported nmap)
-            self.schedule.emit(nmapReport, self.output == '')
+            if self.scheduleAfterImport:
+                self.schedule.emit(nmapReport, self.output == '')
 
         except Exception as e:
             self.tsLog('Something went wrong when parsing the nmap file..')

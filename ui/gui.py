@@ -403,6 +403,24 @@ class Ui_MainWindow(object):
         self.BottomTabWidget.addTab(self.LogTab, _fromUtf8(""))
         log.addHandler(self.LogOutputTextView)
 
+        # Nmap Tab: output of the commands run from the nmap command bar, newest on top of the stack
+        self.NmapOutputTab = QtWidgets.QWidget()
+        self.NmapOutputTab.setObjectName(_fromUtf8("NmapOutputTab"))
+        self.NmapOutputTabLayout = QtWidgets.QVBoxLayout(self.NmapOutputTab)
+        self.NmapOutputTabLayout.setObjectName(_fromUtf8("NmapOutputTabLayout"))
+        self.NmapOutputTitleLabel = QtWidgets.QLabel(self.NmapOutputTab)
+        self.NmapOutputTitleLabel.setObjectName(_fromUtf8("NmapOutputTitleLabel"))
+        self.NmapOutputTitleLabel.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.NmapOutputTabLayout.addWidget(self.NmapOutputTitleLabel)
+        self.NmapOutputStack = QtWidgets.QStackedWidget(self.NmapOutputTab)
+        self.NmapOutputStack.setObjectName(_fromUtf8("NmapOutputStack"))
+        self.NmapOutputPlaceholder = QtWidgets.QPlainTextEdit(self.NmapOutputStack)
+        self.NmapOutputPlaceholder.setObjectName(_fromUtf8("NmapOutputPlaceholder"))
+        self.NmapOutputPlaceholder.setReadOnly(True)
+        self.NmapOutputStack.addWidget(self.NmapOutputPlaceholder)
+        self.NmapOutputTabLayout.addWidget(self.NmapOutputStack)
+        self.BottomTabWidget.addTab(self.NmapOutputTab, _fromUtf8(""))
+
         # Python Tab - Disabled until next release
         #self.PythonTab = QtWidgets.QWidget()
         #self.PythonTab.setObjectName(_fromUtf8("PythonTab"))
@@ -486,14 +504,23 @@ class Ui_MainWindow(object):
         self.NmapCommandLabel.setText(QtWidgets.QApplication.translate("MainWindow", "nmap", None))
         self.NmapCommandInput.setToolTip(QtWidgets.QApplication.translate(
             "MainWindow",
-            "Type nmap options and press Enter. They run against the selected host; "
-            "the output opens in a 'custom scan' tab and the results are added to the host.",
+            "Type an nmap command and press Enter. It runs exactly as typed, and nothing else is started. "
+            "If you leave the target out, the selected host is used. The output appears in the Nmap tab below.",
             None))
         self.NmapCommandInput.lineEdit().setPlaceholderText(QtWidgets.QApplication.translate(
-            "MainWindow", "nmap options for the selected host, e.g. -sV -p 1-1000", None))
+            "MainWindow", "nmap command, e.g. -sV -p 1-1000 192.168.1.10 (no target = the selected host)", None))
         self.NmapCommandRunButton.setText(QtWidgets.QApplication.translate("MainWindow", "Run", None))
         self.NmapCommandRunButton.setToolTip(QtWidgets.QApplication.translate(
-            "MainWindow", "Run nmap with these options against the selected host", None))
+            "MainWindow", "Run this nmap command", None))
+        self.BottomTabWidget.setTabText(self.BottomTabWidget.indexOf(self.NmapOutputTab),
+                                        QtWidgets.QApplication.translate("MainWindow", "Nmap", None))
+        self.NmapOutputPlaceholder.setPlainText(QtWidgets.QApplication.translate(
+            "MainWindow",
+            "Output of the nmap command bar (top of the Scan tab) appears here.\n\n"
+            "Type an nmap command there and press Enter, for example:\n"
+            "    -sV -p 1-1000 192.168.1.10\n\n"
+            "Leave the target out to scan the host selected in the Hosts list.",
+            None))
         self.HostsTabWidget.setTabText(self.HostsTabWidget.indexOf(self.HostsTab),
                                        QtWidgets.QApplication.translate("MainWindow", "Hosts", None))
         self.HostsTabWidget.setTabText(self.HostsTabWidget.indexOf(self.ServicesLeftTab),
