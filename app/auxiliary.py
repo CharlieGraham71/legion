@@ -94,9 +94,44 @@ def getPid(qprocess):
     pid = qprocess.processId()
     return pid
 
+_SHELL_OPERATOR_CHARS = set("|&;<>()\n")
+_SHELL_LEADING_WORDS = {"if", "for", "while", "until", "case", "[", "[[", "{", "!"}
+
+
+def commandNeedsShell(command):
+    """True when a command line only makes sense to a shell: it has an unquoted operator (``|``, ``&&``, ``;``,
+    a redirect, a subshell) or starts with a shell keyword such as ``if``. Quoted or escaped operators do not count."""
+    text = str(command or "")
+    quote = ""
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if quote:
+            if char == "\\" and quote == '"':
+                index += 2
+                continue
+            if char == quote:
+                quote = ""
+        elif char == "\\":
+            index += 2
+            continue
+        elif char in ("'", '"'):
+            quote = char
+        elif char in _SHELL_OPERATOR_CHARS:
+            return True
+        index += 1
+    words = text.split(None, 1)
+    return bool(words) and words[0] in _SHELL_LEADING_WORDS
+
+
 def formatCommandQProcess(inputCommand):
     if isinstance(inputCommand, (list, tuple)):
         parts = list(inputCommand)
+    elif commandNeedsShell(inputCommand):
+        # Many shipped actions are small shell scripts ("command -v tool && tool ... || echo not found",
+        # "if ...; then ...; fi", "... | tee file"). Executed directly they fail to start, because the first word
+        # ("(command", "if") is not a program. Plain commands keep being executed directly, without a shell.
+        return "/bin/sh", ["-c", str(inputCommand)]
     else:
         parts = shlex.split(inputCommand)
     if not parts:

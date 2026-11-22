@@ -61,7 +61,7 @@ class NmapCommandBarTest(unittest.TestCase):
         temp_dir = patch.object(pm_module, "tempDirectory", self.tmp)
         temp_dir.start()
         self.addCleanup(temp_dir.stop)
-        # ViewState.hostTabs is a class-level dict, so tool tabs would otherwise leak from one test's window to the next.
+        # ViewState.hostTabs is a class-level dict: without this, tool tabs leak from one test's window to the next.
         from ui.ViewState import ViewState
         host_tabs = patch.object(ViewState, "hostTabs", {})
         host_tabs.start()
